@@ -34,7 +34,7 @@
 <div class="app">
   <header class="hero">
     <div class="brand"><div class="logo">FUT</div><div><h1>FUTSAL AI LAB</h1><p>후방 전개·진입·위험 지역을 구분하고, 수비 블록·압박·스위칭을 실시간 판단합니다.</p></div></div>
-    <div class="version">v2.1</div>
+    <div class="version">v2.2</div>
   </header>
 
   <main class="layout">
@@ -57,8 +57,6 @@
 
       <div class="toolbar">
         <button id="aiBtn" class="active">AI ON</button>
-        <button id="multiBtn">다중 선택</button>
-        <button id="clearSelectionBtn">선택 해제</button>
         <button id="resetBtn">RESET</button>
       </div>
 
@@ -96,7 +94,7 @@
 
       <div class="section">Player Names</div>
       <div id="roster" class="roster"></div>
-      <div class="hint">다중 선택을 켜고 여러 선수를 누른 뒤, 선택된 선수 중 한 명을 끌면 함께 움직입니다. 빈 코트를 누르면 선택이 해제됩니다.</div>
+      <div class="hint">아이패드에서 여러 손가락으로 서로 다른 선수들을 동시에 드래그할 수 있습니다. 각 선수는 독립적으로 움직입니다.</div>
     </aside>
   </main>
 </div>
@@ -109,7 +107,7 @@
   const ctx = canvas.getContext("2d");
 
   const state = {
-    selected:null, selectedPlayers:[], multiSelect:false, dragStart:null, groupStart:[], aiOn:true, defenseMode:"hybrid", defenseShape:"22",
+    selected:null, activePointers:new Map(), aiOn:true, defenseMode:"hybrid", defenseShape:"22",
     showPaths:true, showLanes:true, showZone:true,
     reaction:0.06, pressDistance:95, shapeWidth:0.95, markingBias:0.70, switchSensitivity:0.60, blockHeight:0.90, maxSpeed:3.0,
     possession:null, dribbleOwner:null, presser:null, switchCandidate:null, switchFrames:0, markMap:[0,1,2,3], switchHold:[0,0,0,0], phase:"build", decision:"hold", decisionReason:"압박 트리거 없음"
@@ -729,21 +727,6 @@
     ctx.fillStyle=team==="attack"?"#10151b":"#fff"; ctx.font="900 14px system-ui"; ctx.textAlign="center"; ctx.textBaseline="middle";
     ctx.fillText(p.name,p.x,p.y);
 
-    const selectedIndex=state.selectedPlayers.findIndex(s=>s.obj===p);
-    if(selectedIndex>=0){
-      ctx.save();
-      ctx.strokeStyle="#42dfff";
-      ctx.lineWidth=5;
-      ctx.setLineDash([8,6]);
-      ctx.beginPath();
-      ctx.arc(p.x,p.y,p.r+13,0,Math.PI*2);
-      ctx.stroke();
-      ctx.fillStyle="#42dfff";
-      ctx.font="900 10px system-ui";
-      ctx.fillText(String(selectedIndex+1),p.x+p.r+12,p.y-p.r-8);
-      ctx.restore();
-    }
-
     if(team==="defend"){
       ctx.font="800 10px system-ui";
       const w=ctx.measureText(p.role).width+14;
@@ -814,120 +797,89 @@
     };
   }
 
-  function hitTest(pos){
-    if(dist(pos,ball)<ball.r+30) return {type:"ball",obj:ball,index:-1};
+  function hitTest(pos,excludeObjects=new Set()){
+    if(!excludeObjects.has(ball) && dist(pos,ball)<ball.r+30){
+      return {type:"ball",obj:ball,index:-1};
+    }
+
     for(let i=attackers.length-1;i>=0;i--){
-      if(dist(pos,attackers[i])<attackers[i].r+18) return {type:"attack",obj:attackers[i],index:i};
+      if(!excludeObjects.has(attackers[i]) && dist(pos,attackers[i])<attackers[i].r+18){
+        return {type:"attack",obj:attackers[i],index:i};
+      }
     }
+
     for(let i=defenders.length-1;i>=0;i--){
-      if(dist(pos,defenders[i])<defenders[i].r+18) return {type:"defend",obj:defenders[i],index:i};
+      if(!excludeObjects.has(defenders[i]) && dist(pos,defenders[i])<defenders[i].r+18){
+        return {type:"defend",obj:defenders[i],index:i};
+      }
     }
+
     return null;
   }
 
-  function isPlayerHit(hit){
-    return hit && (hit.type==="attack" || hit.type==="defend");
-  }
-
-  function clearPlayerSelection(){
-    state.selectedPlayers=[];
-    state.groupStart=[];
-  }
-
-  function togglePlayerSelection(hit){
-    const existing=state.selectedPlayers.findIndex(s=>s.obj===hit.obj);
-    if(existing>=0) state.selectedPlayers.splice(existing,1);
-    else state.selectedPlayers.push(hit);
-  }
-
-  function beginGroupDrag(pos,hit){
-    state.dragStart={...pos};
-    if(!state.selectedPlayers.some(s=>s.obj===hit.obj)){
-      if(!state.multiSelect) clearPlayerSelection();
-      state.selectedPlayers.push(hit);
-    }
-    state.groupStart=state.selectedPlayers.map(s=>({
-      obj:s.obj,x:s.obj.x,y:s.obj.y,type:s.type,index:s.index
-    }));
+  function activeDraggedObjects(){
+    return new Set(
+      Array.from(state.activePointers.values()).map(item=>item.hit.obj)
+    );
   }
 
   canvas.addEventListener("pointerdown",e=>{
     e.preventDefault();
+
     const pos=pointerPos(e);
-    const hit=hitTest(pos);
+    const hit=hitTest(pos,activeDraggedObjects());
+    if(!hit) return;
 
-    if(!hit){
-      clearPlayerSelection();
-      state.selected=null;
-      return;
-    }
-
-    if(isPlayerHit(hit)){
-      if(state.multiSelect){
-        const already=state.selectedPlayers.some(s=>s.obj===hit.obj);
-        if(!already) togglePlayerSelection(hit);
-      }else if(!state.selectedPlayers.some(s=>s.obj===hit.obj)){
-        clearPlayerSelection();
-        state.selectedPlayers.push(hit);
-      }
-
-      state.selected=hit;
-      beginGroupDrag(pos,hit);
-    }else{
-      state.selected=hit;
-      state.dragStart={...pos};
-      state.groupStart=[];
-    }
+    state.activePointers.set(e.pointerId,{
+      hit,
+      startPointer:{...pos},
+      startObject:{x:hit.obj.x,y:hit.obj.y}
+    });
 
     canvas.setPointerCapture(e.pointerId);
   });
 
   canvas.addEventListener("pointermove",e=>{
-    if(!state.selected) return;
+    const active=state.activePointers.get(e.pointerId);
+    if(!active) return;
+
     e.preventDefault();
-
     const pos=pointerPos(e);
+    const dx=pos.x-active.startPointer.x;
+    const dy=pos.y-active.startPointer.y;
+    const obj=active.hit.obj;
 
-    if(state.selected.type==="ball"){
-      ball.x=clamp(pos.x,45,canvas.width-45);
-      ball.y=clamp(pos.y,60,canvas.height-60);
-      return;
+    obj.x=clamp(active.startObject.x+dx,45,canvas.width-45);
+    obj.y=clamp(active.startObject.y+dy,60,canvas.height-60);
+
+    if(active.hit.type==="defend"){
+      obj.tx=obj.x;
+      obj.ty=obj.y;
     }
 
-    if(!state.dragStart) return;
-
-    const dx=pos.x-state.dragStart.x;
-    const dy=pos.y-state.dragStart.y;
-
-    state.groupStart.forEach(item=>{
-      item.obj.x=clamp(item.x+dx,45,canvas.width-45);
-      item.obj.y=clamp(item.y+dy,60,canvas.height-60);
-
-      if(item.type==="defend"){
-        item.obj.tx=item.obj.x;
-        item.obj.ty=item.obj.y;
-      }
-    });
-
-    if(state.dribbleOwner){
+    if(state.dribbleOwner && active.hit.type!=="ball"){
       const group=state.dribbleOwner.team==="attack"?attackers:defenders;
       const owner=group[state.dribbleOwner.index];
-      const ownerMoved=state.groupStart.some(item=>item.obj===owner);
-      if(ownerMoved){
+
+      if(owner===obj){
         ball.x=owner.x+20;
         ball.y=owner.y+(state.dribbleOwner.team==="attack"?34:-34);
       }
     }
   });
 
-  function finishPointer(){
-    state.selected=null;
-    state.dragStart=null;
-    state.groupStart=[];
+  function releasePointer(e){
+    state.activePointers.delete(e.pointerId);
+    try{
+      if(canvas.hasPointerCapture(e.pointerId)){
+        canvas.releasePointerCapture(e.pointerId);
+      }
+    }catch(_){}
   }
 
-  canvas.addEventListener("pointerup",finishPointer);
-  canvas.addEventListener("pointercancel",finishPointer);
+  canvas.addEventListener("pointerup",releasePointer);
+  canvas.addEventListener("pointercancel",releasePointer);
+  canvas.addEventListener("lostpointercapture",releasePointer);
 
   function bindToggle(id,key){
     const el=document.getElementById(id);
@@ -942,15 +894,7 @@
     e.currentTarget.textContent=state.aiOn?"AI ON":"AI OFF";
   });
 
-  document.getElementById("multiBtn").addEventListener("click",e=>{
-    state.multiSelect=!state.multiSelect;
-    e.currentTarget.classList.toggle("active",state.multiSelect);
-    e.currentTarget.textContent=state.multiSelect?"다중 선택 ON":"다중 선택";
-  });
-
-  document.getElementById("clearSelectionBtn").addEventListener("click",clearPlayerSelection);
-
-  bindToggle("pathsBtn","showPaths"); bindToggle("lanesBtn","showLanes"); bindToggle("zoneBtn","showZone");
+    bindToggle("pathsBtn","showPaths"); bindToggle("lanesBtn","showLanes"); bindToggle("zoneBtn","showZone");
 
   function bindRange(id,key,outId,digits){
     document.getElementById(id).addEventListener("input",e=>{
@@ -993,7 +937,7 @@
     attackers.forEach((p,i)=>Object.assign(p,initial.attackers[i],{name:p.name}));
     defenders.forEach((p,i)=>Object.assign(p,initial.defenders[i],{name:p.name}));
     Object.assign(ball,initial.ball);
-    state.presser=null; state.possession=null; state.dribbleOwner=null; state.markMap=[0,1,2,3]; state.switchHold=[0,0,0,0]; state.phase="build"; state.decision="hold"; state.decisionReason="압박 트리거 없음"; clearPlayerSelection();
+    state.presser=null; state.possession=null; state.dribbleOwner=null; state.markMap=[0,1,2,3]; state.switchHold=[0,0,0,0]; state.phase="build"; state.decision="hold"; state.decisionReason="압박 트리거 없음"; state.activePointers.clear();
   });
 
   loadNames(); buildRoster(); render();
