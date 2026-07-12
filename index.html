@@ -34,7 +34,7 @@
 <div class="app">
   <header class="hero">
     <div class="brand"><div class="logo">FUT</div><div><h1>FUTSAL AI LAB</h1><p>우리 팀 움직임을 읽고 상대 AI 수비와 전술 코치가 실시간 반응합니다.</p></div></div>
-    <div class="version">v1.1</div>
+    <div class="version">v1.3</div>
   </header>
 
   <main class="layout">
@@ -86,6 +86,7 @@
       <div class="rangeRow"><span>압박 거리</span><input id="pressDistance" type="range" min="55" max="140" step="5" value="95"><b id="pressVal">95</b></div>
       <div class="rangeRow"><span>수비 간격</span><input id="shapeWidth" type="range" min="0.75" max="1.25" step="0.05" value="0.95"><b id="shapeWidthVal">0.95</b></div>
       <div class="rangeRow"><span>맨마킹 성향</span><input id="markingBias" type="range" min="0.35" max="0.9" step="0.05" value="0.70"><b id="markingBiasVal">0.70</b></div>
+      <div class="rangeRow"><span>스위칭 민감도</span><input id="switchSensitivity" type="range" min="0.25" max="0.9" step="0.05" value="0.60"><b id="switchSensitivityVal">0.60</b></div>
       <div class="rangeRow"><span>최대 속도</span><input id="maxSpeed" type="range" min="1.5" max="6" step="0.25" value="3.0"><b id="maxSpeedVal">3.00</b></div>
 
       <div class="section">Player Names</div>
@@ -105,8 +106,8 @@
   const state = {
     selected:null, aiOn:true, defenseMode:"hybrid", defenseShape:"22",
     showPaths:true, showLanes:true, showZone:true,
-    reaction:0.06, pressDistance:95, shapeWidth:0.95, markingBias:0.70, maxSpeed:3.0,
-    possession:null, dribbleOwner:null, presser:null, switchCandidate:null, switchFrames:0
+    reaction:0.06, pressDistance:95, shapeWidth:0.95, markingBias:0.70, switchSensitivity:0.60, maxSpeed:3.0,
+    possession:null, dribbleOwner:null, presser:null, switchCandidate:null, switchFrames:0, markMap:[0,1,2,3], switchHold:[0,0,0,0]
   };
 
   const attackers = [
@@ -224,119 +225,341 @@
     }
   }
 
-  function assignMarks(){
-    const pairs=[];
-    const available=new Set(attackers.map((_,i)=>i));
+
+
+  function generatePermutations(){
+    const base=[0,1,2,3];
+    const out=[];
+    function permute(arr,left){
+      if(left===arr.length){out.push(arr.slice());return;}
+      for(let i=left;i<arr.length;i++){
+        [arr[left],arr[i]]=[arr[i],arr[left]];
+        permute(arr,left+1);
+        [arr[left],arr[i]]=[arr[i],arr[left]];
+      }
+    }
+    permute(base,0);
+    return out;
+  }
+
+  const allPermutations=generatePermutations();
+
+  function assignmentCost(mapping){
+    const goal={x:canvas.width/2,y:45};
+    let cost=0;
 
     defenders.forEach((d,di)=>{
-      let bestIndex=null;
-      let bestScore=Infinity;
+      const a=attackers[mapping[di]];
+      const proximity=dist(d,a);
+      const goalThreat=Math.max(0,520-dist(a,goal))*.42;
+      const centralThreat=Math.max(0,165-Math.abs(a.x-canvas.width/2))*.42;
+      const ballThreat=Math.max(0,340-dist(a,ball))*.30;
+      const sidePenalty=Math.abs(d.x-a.x)*.22;
+      const crossPenalty=((d.x-canvas.width/2)*(a.x-canvas.width/2)<0)?38:0;
 
-      available.forEach(ai=>{
-        const a=attackers[ai];
-        const goalThreat=(1120-a.y)*0.18;
-        const centralThreat=Math.max(0,120-Math.abs(a.x-canvas.width/2))*0.25;
-        const ballRelation=Math.max(0,220-dist(a,ball))*0.18;
-        const proximity=dist(d,a);
-        const score=proximity-goalThreat-centralThreat-ballRelation;
+      // 기존 담당자를 바꾸는 데 비용을 줘서 불필요한 스위칭을 방지
+      const continuityPenalty=(state.markMap[di]===mapping[di])?0:75*(1-state.switchSensitivity);
 
-        if(score<bestScore){
-          bestScore=score;
-          bestIndex=ai;
-        }
-      });
+      cost += proximity+sidePenalty+crossPenalty+continuityPenalty
+              -goalThreat-centralThreat-ballThreat;
+    });
 
-      if(bestIndex!==null){
-        pairs[di]=bestIndex;
-        available.delete(bestIndex);
+    return cost;
+  }
+
+  function crossingDetected(ai,aj){
+    const a=attackers[ai], b=attackers[aj];
+    const prevA=state.prevAttackers?.[ai], prevB=state.prevAttackers?.[aj];
+    if(!prevA || !prevB) return false;
+
+    const before=(prevA.x-prevB.x);
+    const now=(a.x-b.x);
+    const swappedSide=(before===0)?false:(before*now<0);
+    const closeNow=dist(a,b)<150;
+    const movingAcross=Math.abs(a.x-prevA.x)+Math.abs(b.x-prevB.x)>18;
+
+    return swappedSide && closeNow && movingAcross;
+  }
+
+  function shouldSwitchPair(di,dj,currentMap,bestMap){
+    const currentAi=currentMap[di], currentAj=currentMap[dj];
+    const bestAi=bestMap[di], bestAj=bestMap[dj];
+
+    const exactSwap=bestAi===currentAj && bestAj===currentAi;
+    if(!exactSwap) return false;
+
+    const defendersClose=dist(defenders[di],defenders[dj])<190;
+    const attackersCross=crossingDetected(currentAi,currentAj);
+
+    const currentCost=
+      dist(defenders[di],attackers[currentAi])+
+      dist(defenders[dj],attackers[currentAj]);
+
+    const swappedCost=
+      dist(defenders[di],attackers[currentAj])+
+      dist(defenders[dj],attackers[currentAi]);
+
+    const clearBenefit=swappedCost+35*state.switchSensitivity<currentCost;
+
+    return defendersClose && (attackersCross || clearBenefit);
+  }
+
+  function updateMarkAssignments(){
+    let best=state.markMap.slice();
+    let bestCost=assignmentCost(best);
+
+    allPermutations.forEach(mapping=>{
+      const cost=assignmentCost(mapping);
+      if(cost<bestCost){
+        bestCost=cost;
+        best=mapping.slice();
       }
     });
 
-    return pairs;
+    const next=state.markMap.slice();
+
+    // 우선 2인 스위칭부터 판단
+    for(let i=0;i<defenders.length;i++){
+      for(let j=i+1;j<defenders.length;j++){
+        if(shouldSwitchPair(i,j,state.markMap,best)){
+          state.switchHold[i]++;
+          state.switchHold[j]++;
+
+          const required=Math.round(18-(state.switchSensitivity*10));
+          if(state.switchHold[i]>=required && state.switchHold[j]>=required){
+            const temp=next[i];
+            next[i]=next[j];
+            next[j]=temp;
+            state.switchHold[i]=0;
+            state.switchHold[j]=0;
+          }
+        }
+      }
+    }
+
+    // 스위칭이 아닌 단순 재배정은 훨씬 보수적으로 처리
+    for(let i=0;i<defenders.length;i++){
+      if(next[i]===state.markMap[i] && best[i]!==state.markMap[i]){
+        const currentA=attackers[state.markMap[i]];
+        const proposedA=attackers[best[i]];
+        const currentDist=dist(defenders[i],currentA);
+        const proposedDist=dist(defenders[i],proposedA);
+
+        if(proposedDist+90*state.switchSensitivity<currentDist){
+          state.switchHold[i]++;
+          const required=Math.round(28-(state.switchSensitivity*12));
+          if(state.switchHold[i]>=required){
+            next[i]=best[i];
+            state.switchHold[i]=0;
+          }
+        }else{
+          state.switchHold[i]=Math.max(0,state.switchHold[i]-1);
+        }
+      }
+    }
+
+    // 중복 배정 방지
+    if(new Set(next).size===4){
+      state.markMap=next;
+    }
   }
 
-  function shouldZoneOff(mark,defender){
-    const farFromBall=dist(mark,ball)>310;
-    const veryWide=Math.abs(mark.x-canvas.width/2)>260;
-    const behindBall=mark.y>ball.y+140;
-    const lowThreat=farFromBall && veryWide && behindBall;
+  function attackerThreat(a){
+    const goal={x:canvas.width/2,y:45};
+    const goalValue=clamp((520-dist(a,goal))/520,0,1);
+    const centralValue=clamp((175-Math.abs(a.x-canvas.width/2))/175,0,1);
+    const ballValue=clamp((360-dist(a,ball))/360,0,1);
+    const farPostValue=(Math.abs(a.x-ball.x)>260 && a.y<420)?0.55:0;
+    return clamp(goalValue*.45+centralValue*.20+ballValue*.25+farPostValue*.10,0,1);
+  }
 
-    const markDistance=dist(defender,mark);
-    return lowThreat || markDistance>330;
+  function canPassOn(mark,defender){
+    const threat=attackerThreat(mark);
+    const farFromBall=dist(mark,ball)>360;
+    const behindBall=mark.y>ball.y+150;
+    const veryWide=Math.abs(mark.x-canvas.width/2)>275;
+    return threat<.28 && farFromBall && behindBall && veryWide && dist(defender,mark)>260;
+  }
+
+  function identifyPivot(){
+    return attackers.slice().sort((a,b)=>{
+      const av=a.y+Math.abs(a.x-canvas.width/2)*.35;
+      const bv=b.y+Math.abs(b.x-canvas.width/2)*.35;
+      return av-bv;
+    })[0];
+  }
+
+  function identifyFarPostThreat(){
+    const ballLeft=ball.x<canvas.width/2;
+    return attackers
+      .filter(a=>ballLeft?a.x>canvas.width/2:a.x<canvas.width/2)
+      .sort((a,b)=>a.y-b.y)[0] || null;
+  }
+
+  function pressTrigger(){
+    const owner=state.possession?.team==="attack"?state.possession.p:null;
+    if(!owner) return false;
+
+    const nearSideline=owner.x<125 || owner.x>canvas.width-125;
+    const isolated=Math.min(...attackers.filter(p=>p!==owner).map(p=>dist(p,owner)))>210;
+    const advanced=owner.y<620;
+    const centralDanger=Math.abs(owner.x-canvas.width/2)<145 && owner.y<520;
+
+    if(state.defenseMode==="high") return owner.y<820;
+    if(state.defenseMode==="low") return nearSideline && advanced && isolated;
+    return (nearSideline && advanced) || centralDanger;
+  }
+
+  function choosePresser(){
+    if(!pressTrigger()){
+      state.presser=null;
+      state.switchCandidate=null;
+      state.switchFrames=0;
+      return;
+    }
+
+    const candidates=defenders.map((d,i)=>({
+      i,score:dist(d,ball)+Math.abs(d.x-ball.x)*.08
+    })).sort((a,b)=>a.score-b.score);
+
+    if(candidates[0].score>220){state.presser=null;return;}
+
+    const best=candidates[0].i;
+    if(best===state.presser){
+      state.switchCandidate=null;state.switchFrames=0;return;
+    }
+
+    const current=state.presser===null?999:(candidates.find(c=>c.i===state.presser)?.score??999);
+    if(candidates[0].score+28<current){
+      if(state.switchCandidate===best) state.switchFrames++;
+      else {state.switchCandidate=best;state.switchFrames=1;}
+      if(state.switchFrames>12){
+        state.presser=best;state.switchCandidate=null;state.switchFrames=0;
+      }
+    }
+  }
+
+  function compactTargets(targets){
+    const cx=targets.reduce((s,t)=>s+t.x,0)/targets.length;
+    const cy=targets.reduce((s,t)=>s+t.y,0)/targets.length;
+    const maxDx=210*state.shapeWidth;
+    const maxDy=220;
+    return targets.map(t=>({
+      x:clamp(t.x,cx-maxDx,cx+maxDx),
+      y:clamp(t.y,cy-maxDy,cy+maxDy)
+    }));
+  }
+
+  function separateTargets(targets){
+    const result=targets.map(t=>({...t}));
+    for(let pass=0;pass<3;pass++){
+      for(let i=0;i<result.length;i++){
+        for(let j=i+1;j<result.length;j++){
+          const dx=result[j].x-result[i].x;
+          const dy=result[j].y-result[i].y;
+          const d=Math.hypot(dx,dy)||1;
+          const minGap=82;
+          if(d<minGap){
+            const push=(minGap-d)/2;
+            result[i].x-=dx/d*push; result[i].y-=dy/d*push;
+            result[j].x+=dx/d*push; result[j].y+=dy/d*push;
+          }
+        }
+      }
+    }
+    return result;
   }
 
   function computeDefense(){
     if(!state.aiOn) return;
 
+    updateMarkAssignments();
     choosePresser();
 
     const shell=defenseShell();
     const goal={x:canvas.width/2,y:45};
-    const shape=detectAttackShape();
-    const markAssignments=assignMarks();
+    const pivot=identifyPivot();
+    const farPost=identifyFarPostThreat();
 
-    defenders.forEach((d,i)=>{
-      let target={...shell[i]};
-      let role="Zone";
-
-      const marked=attackers[markAssignments[i] ?? (i%attackers.length)];
+    const targets=defenders.map((d,i)=>{
+      const marked=attackers[state.markMap[i]];
       const gdir=unit(goal.x-marked.x,goal.y-marked.y);
+      const threat=attackerThreat(marked);
+
+      const markingDistance=threat>.68?54:threat>.42?66:78;
       const manTarget={
-        x:marked.x+gdir.x*72,
-        y:marked.y+gdir.y*72
+        x:marked.x+gdir.x*markingDistance,
+        y:marked.y+gdir.y*markingDistance
       };
 
+      let target={...manTarget};
+      let role="Mark";
+
       if(state.defenseMode==="man"){
-        target=manTarget;
-        role="Mark";
-      }else if(state.presser===i){
+        return {target,role};
+      }
+
+      if(state.presser===i){
         const gd=unit(goal.x-ball.x,goal.y-ball.y);
         target={
           x:ball.x+gd.x*state.pressDistance,
           y:ball.y+gd.y*state.pressDistance
         };
         role="Press";
-      }else{
-        const zoneOff=shouldZoneOff(marked,d);
-
-        const nonPressers=defenders.filter((_,idx)=>idx!==state.presser);
-        const rank=Math.max(0,nonPressers.indexOf(d));
-
-        const lane=midpoint(ball,marked,shape.name==="4-0"?.40:.46);
-        const cover=midpoint(ball,goal,.50+rank*.06);
-
-        const zoneTarget={
-          x:lerp(shell[i].x,lerp(cover.x,lane.x,.42),.34),
-          y:lerp(shell[i].y,lerp(cover.y,lane.y,.42),.34)
-        };
-
-        let manWeight=state.defenseMode==="hybrid"?state.markingBias:
-                      state.defenseMode==="high"?.62:
-                      state.defenseMode==="mid"?.52:
-                      state.defenseMode==="low"?.38:.50;
-
-        if(zoneOff) manWeight*=.35;
-
-        target={
-          x:lerp(zoneTarget.x,manTarget.x,manWeight),
-          y:lerp(zoneTarget.y,manTarget.y,manWeight)
-        };
-
-        const maxShift=shape.name==="4-0"?120:105;
-        target.x=clamp(target.x,shell[i].x-maxShift,shell[i].x+maxShift);
-        target.y=clamp(target.y,shell[i].y-105,shell[i].y+110);
-
-        if(zoneOff){
-          role=rank===0?"Cover":"Zone";
-        }else{
-          role="Mark";
-        }
+        return {target,role};
       }
 
-      d.tx=clamp(target.x,60,canvas.width-60);
-      d.ty=clamp(target.y,80,canvas.height-80);
-      d.role=role;
+      if(marked===pivot && attackerThreat(pivot)>.48){
+        const front=midpoint(ball,pivot,.72);
+        target={
+          x:lerp(manTarget.x,front.x,.30),
+          y:lerp(manTarget.y,front.y,.30)
+        };
+        role="Pivot";
+        return {target,role};
+      }
+
+      if(farPost && marked===farPost && farPost.y<440){
+        target={
+          x:lerp(manTarget.x,goal.x,.12),
+          y:lerp(manTarget.y,goal.y,.08)
+        };
+        role="Far Post";
+        return {target,role};
+      }
+
+      const zoneOff=canPassOn(marked,d);
+      const lane=midpoint(ball,marked,.45);
+      const cover=midpoint(ball,goal,.52);
+      const zoneTarget={
+        x:lerp(shell[i].x,lerp(cover.x,lane.x,.40),.34),
+        y:lerp(shell[i].y,lerp(cover.y,lane.y,.40),.34)
+      };
+
+      let manWeight=state.markingBias;
+      if(state.defenseMode==="high") manWeight=Math.max(manWeight,.70);
+      if(state.defenseMode==="low") manWeight=Math.min(manWeight,.48);
+      if(zoneOff) manWeight=.20;
+      else manWeight=clamp(manWeight+threat*.18,.35,.92);
+
+      target={
+        x:lerp(zoneTarget.x,manTarget.x,manWeight),
+        y:lerp(zoneTarget.y,manTarget.y,manWeight)
+      };
+
+      role=zoneOff?"Zone":threat>.55?"Tight Mark":"Mark";
+      return {target,role};
     });
+
+    const compacted=separateTargets(compactTargets(targets.map(x=>x.target)));
+
+    defenders.forEach((d,i)=>{
+      d.tx=clamp(compacted[i].x,60,canvas.width-60);
+      d.ty=clamp(compacted[i].y,80,canvas.height-80);
+      d.role=targets[i].role;
+    });
+
+    state.prevAttackers=attackers.map(p=>({x:p.x,y:p.y}));
   }
 
   function animateDefense(){
@@ -474,7 +697,7 @@
     document.getElementById("shapeDesc").textContent=`신뢰도 ${Math.round(analysis.shape.confidence*100)}%`;
     document.getElementById("balance").textContent=analysis.score;
     document.getElementById("coachTitle").textContent=analysis.title;
-    document.getElementById("coachText").textContent=`현재 공격 형태는 ${analysis.shape.name}에 가깝습니다. 상대 AI는 기본적으로 맨마킹을 유지하고, 위협이 낮은 선수는 존으로 넘겨 공간을 보호합니다.`;
+    document.getElementById("coachText").textContent=`현재 공격 형태는 ${analysis.shape.name}에 가깝습니다. 상대 AI는 맨마킹을 기본으로 하며, 공격수가 교차하거나 로테이션하면 인접 수비수끼리 스위칭해 담당 선수를 인계합니다.`;
     document.getElementById("coachList").innerHTML=analysis.tips.map(t=>`<li>${t}</li>`).join("");
 
     if(!state.possession){
@@ -553,6 +776,7 @@
   bindRange("pressDistance","pressDistance","pressVal",0);
   bindRange("shapeWidth","shapeWidth","shapeWidthVal",2);
   bindRange("markingBias","markingBias","markingBiasVal",2);
+  bindRange("switchSensitivity","switchSensitivity","switchSensitivityVal",2);
   bindRange("maxSpeed","maxSpeed","maxSpeedVal",2);
 
   function saveNames(){
@@ -581,7 +805,7 @@
     attackers.forEach((p,i)=>Object.assign(p,initial.attackers[i],{name:p.name}));
     defenders.forEach((p,i)=>Object.assign(p,initial.defenders[i],{name:p.name}));
     Object.assign(ball,initial.ball);
-    state.presser=null; state.possession=null; state.dribbleOwner=null;
+    state.presser=null; state.possession=null; state.dribbleOwner=null; state.markMap=[0,1,2,3]; state.switchHold=[0,0,0,0];
   });
 
   loadNames(); buildRoster(); render();
