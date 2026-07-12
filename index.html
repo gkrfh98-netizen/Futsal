@@ -33,8 +33,8 @@
 <body>
 <div class="app">
   <header class="hero">
-    <div class="brand"><div class="logo">FUT</div><div><h1>FUTSAL AI LAB</h1><p>우리 팀 움직임을 읽고 상대 AI 수비와 전술 코치가 실시간 반응합니다.</p></div></div>
-    <div class="version">v1.3</div>
+    <div class="brand"><div class="logo">FUT</div><div><h1>FUTSAL AI LAB</h1><p>후방 전개·진입·위험 지역을 구분하고, 수비 블록·압박·스위칭을 실시간 판단합니다.</p></div></div>
+    <div class="version">v2.0</div>
   </header>
 
   <main class="layout">
@@ -65,6 +65,8 @@
         <div class="stat"><label>Detected Shape</label><strong id="shape">3-1</strong><small id="shapeDesc">실제 위치 기반</small></div>
         <div class="stat"><label>Attack Balance</label><strong id="balance">72</strong><small>폭·깊이·지원거리</small></div>
         <div class="stat"><label>Pressure</label><strong id="pressure">0%</strong><small>볼 주변 수비 밀도</small></div>
+        <div class="stat"><label>Game Phase</label><strong id="gamePhase">Build-up</strong><small id="phaseDesc">블록 유지</small></div>
+        <div class="stat"><label>Defense Decision</label><strong id="defDecision">HOLD</strong><small id="decisionDesc">압박 트리거 없음</small></div>
       </div>
 
       <div class="section">AI Tactical Coach</div>
@@ -87,6 +89,7 @@
       <div class="rangeRow"><span>수비 간격</span><input id="shapeWidth" type="range" min="0.75" max="1.25" step="0.05" value="0.95"><b id="shapeWidthVal">0.95</b></div>
       <div class="rangeRow"><span>맨마킹 성향</span><input id="markingBias" type="range" min="0.35" max="0.9" step="0.05" value="0.70"><b id="markingBiasVal">0.70</b></div>
       <div class="rangeRow"><span>스위칭 민감도</span><input id="switchSensitivity" type="range" min="0.25" max="0.9" step="0.05" value="0.60"><b id="switchSensitivityVal">0.60</b></div>
+      <div class="rangeRow"><span>블록 높이</span><input id="blockHeight" type="range" min="0.65" max="1.20" step="0.05" value="0.90"><b id="blockHeightVal">0.90</b></div>
       <div class="rangeRow"><span>최대 속도</span><input id="maxSpeed" type="range" min="1.5" max="6" step="0.25" value="3.0"><b id="maxSpeedVal">3.00</b></div>
 
       <div class="section">Player Names</div>
@@ -106,8 +109,8 @@
   const state = {
     selected:null, aiOn:true, defenseMode:"hybrid", defenseShape:"22",
     showPaths:true, showLanes:true, showZone:true,
-    reaction:0.06, pressDistance:95, shapeWidth:0.95, markingBias:0.70, switchSensitivity:0.60, maxSpeed:3.0,
-    possession:null, dribbleOwner:null, presser:null, switchCandidate:null, switchFrames:0, markMap:[0,1,2,3], switchHold:[0,0,0,0]
+    reaction:0.06, pressDistance:95, shapeWidth:0.95, markingBias:0.70, switchSensitivity:0.60, blockHeight:0.90, maxSpeed:3.0,
+    possession:null, dribbleOwner:null, presser:null, switchCandidate:null, switchFrames:0, markMap:[0,1,2,3], switchHold:[0,0,0,0], phase:"build", decision:"hold", decisionReason:"압박 트리거 없음"
   };
 
   const attackers = [
@@ -171,61 +174,60 @@
     return {name:"비정형",confidence:.58};
   }
 
+
+  function classifyPhase(){
+    const owner=state.possession?.team==="attack"?state.possession.p:null;
+    const y=owner?owner.y:ball.y;
+
+    if(y>730) return "build";
+    if(y>500) return "progress";
+    if(y>300) return "entry";
+    return "final";
+  }
+
+  function phaseName(phase){
+    return {
+      build:"Build-up",
+      progress:"Progression",
+      entry:"Final-third Entry",
+      final:"Goal Threat"
+    }[phase];
+  }
+
   function defenseShell(){
-    const shiftX=clamp((ball.x-canvas.width/2)*.20,-85,85);
-    const retreat=state.defenseMode==="low"?-70:state.defenseMode==="high"?75:0;
+    state.phase=classifyPhase();
+
+    const shiftX=clamp((ball.x-canvas.width/2)*.18,-72,72);
+    const phaseBase={
+      build:360,
+      progress:400,
+      entry:345,
+      final:265
+    }[state.phase];
+
+    const modeOffset=
+      state.defenseMode==="low"?-75:
+      state.defenseMode==="high"?85:0;
+
+    const baseY=phaseBase+modeOffset*state.blockHeight;
     const width=150*state.shapeWidth;
 
     if(state.defenseShape==="31"){
       return [
-        {x:canvas.width/2-width+shiftX,y:350+retreat},
-        {x:canvas.width/2+shiftX*.55,y:320+retreat},
-        {x:canvas.width/2+width+shiftX,y:350+retreat},
-        {x:canvas.width/2+shiftX*.5,y:545+retreat*.65}
+        {x:canvas.width/2-width+shiftX,y:baseY-15},
+        {x:canvas.width/2+shiftX*.50,y:baseY-45},
+        {x:canvas.width/2+width+shiftX,y:baseY-15},
+        {x:canvas.width/2+shiftX*.45,y:baseY+175}
       ];
     }
+
     return [
-      {x:canvas.width/2-width+shiftX,y:350+retreat},
-      {x:canvas.width/2+width+shiftX,y:350+retreat},
-      {x:canvas.width/2-width*.72+shiftX*.65,y:535+retreat*.65},
-      {x:canvas.width/2+width*.72+shiftX*.65,y:535+retreat*.65}
+      {x:canvas.width/2-width+shiftX,y:baseY},
+      {x:canvas.width/2+width+shiftX,y:baseY},
+      {x:canvas.width/2-width*.72+shiftX*.62,y:baseY+180},
+      {x:canvas.width/2+width*.72+shiftX*.62,y:baseY+180}
     ];
   }
-
-  function choosePresser(){
-    const triggerLine=state.defenseMode==="high"?820:state.defenseMode==="low"?430:680;
-    const candidates=defenders.map((d,i)=>({
-      i,
-      score:dist(d,ball)+Math.abs(d.x-ball.x)*.10
-    })).sort((a,b)=>a.score-b.score);
-
-    if(ball.y>triggerLine || candidates[0].score>210){
-      state.presser=null;
-      state.switchCandidate=null;
-      state.switchFrames=0;
-      return;
-    }
-
-    const best=candidates[0].i;
-    if(best===state.presser){
-      state.switchCandidate=null;
-      state.switchFrames=0;
-      return;
-    }
-
-    const current=state.presser===null?999:(candidates.find(c=>c.i===state.presser)?.score??999);
-    if(candidates[0].score+32<current){
-      if(state.switchCandidate===best) state.switchFrames++;
-      else {state.switchCandidate=best;state.switchFrames=1;}
-      if(state.switchFrames>14){
-        state.presser=best;
-        state.switchCandidate=null;
-        state.switchFrames=0;
-      }
-    }
-  }
-
-
 
   function generatePermutations(){
     const base=[0,1,2,3];
@@ -244,24 +246,38 @@
 
   const allPermutations=generatePermutations();
 
+  function attackerThreat(a){
+    const goal={x:canvas.width/2,y:45};
+    const goalValue=clamp((540-dist(a,goal))/540,0,1);
+    const centralValue=clamp((180-Math.abs(a.x-canvas.width/2))/180,0,1);
+    const ballValue=clamp((360-dist(a,ball))/360,0,1);
+    const behindLineValue=a.y<310?.65:0;
+    const farPostValue=(Math.abs(a.x-ball.x)>250 && a.y<390)?.60:0;
+
+    return clamp(
+      goalValue*.38+
+      centralValue*.18+
+      ballValue*.23+
+      behindLineValue*.11+
+      farPostValue*.10,
+      0,1
+    );
+  }
+
   function assignmentCost(mapping){
     const goal={x:canvas.width/2,y:45};
     let cost=0;
 
     defenders.forEach((d,di)=>{
       const a=attackers[mapping[di]];
+      const threat=attackerThreat(a);
       const proximity=dist(d,a);
-      const goalThreat=Math.max(0,520-dist(a,goal))*.42;
-      const centralThreat=Math.max(0,165-Math.abs(a.x-canvas.width/2))*.42;
-      const ballThreat=Math.max(0,340-dist(a,ball))*.30;
-      const sidePenalty=Math.abs(d.x-a.x)*.22;
-      const crossPenalty=((d.x-canvas.width/2)*(a.x-canvas.width/2)<0)?38:0;
+      const goalThreat=Math.max(0,530-dist(a,goal))*.38;
+      const sidePenalty=Math.abs(d.x-a.x)*.18;
+      const crossPenalty=((d.x-canvas.width/2)*(a.x-canvas.width/2)<0)?34:0;
+      const continuityPenalty=(state.markMap[di]===mapping[di])?0:78*(1-state.switchSensitivity);
 
-      // 기존 담당자를 바꾸는 데 비용을 줘서 불필요한 스위칭을 방지
-      const continuityPenalty=(state.markMap[di]===mapping[di])?0:75*(1-state.switchSensitivity);
-
-      cost += proximity+sidePenalty+crossPenalty+continuityPenalty
-              -goalThreat-centralThreat-ballThreat;
+      cost+=proximity+sidePenalty+crossPenalty+continuityPenalty-goalThreat-threat*125;
     });
 
     return cost;
@@ -272,24 +288,23 @@
     const prevA=state.prevAttackers?.[ai], prevB=state.prevAttackers?.[aj];
     if(!prevA || !prevB) return false;
 
-    const before=(prevA.x-prevB.x);
-    const now=(a.x-b.x);
-    const swappedSide=(before===0)?false:(before*now<0);
-    const closeNow=dist(a,b)<150;
-    const movingAcross=Math.abs(a.x-prevA.x)+Math.abs(b.x-prevB.x)>18;
+    const horizontalCross=(prevA.x-prevB.x)*(a.x-b.x)<0;
+    const verticalCross=(prevA.y-prevB.y)*(a.y-b.y)<0;
+    const closeNow=dist(a,b)<165;
+    const movement=
+      Math.abs(a.x-prevA.x)+Math.abs(a.y-prevA.y)+
+      Math.abs(b.x-prevB.x)+Math.abs(b.y-prevB.y);
 
-    return swappedSide && closeNow && movingAcross;
+    return closeNow && movement>18 && (horizontalCross || verticalCross);
   }
 
   function shouldSwitchPair(di,dj,currentMap,bestMap){
     const currentAi=currentMap[di], currentAj=currentMap[dj];
-    const bestAi=bestMap[di], bestAj=bestMap[dj];
-
-    const exactSwap=bestAi===currentAj && bestAj===currentAi;
+    const exactSwap=bestMap[di]===currentAj && bestMap[dj]===currentAi;
     if(!exactSwap) return false;
 
-    const defendersClose=dist(defenders[di],defenders[dj])<190;
-    const attackersCross=crossingDetected(currentAi,currentAj);
+    const defendersClose=dist(defenders[di],defenders[dj])<205;
+    const crossing=crossingDetected(currentAi,currentAj);
 
     const currentCost=
       dist(defenders[di],attackers[currentAi])+
@@ -299,9 +314,8 @@
       dist(defenders[di],attackers[currentAj])+
       dist(defenders[dj],attackers[currentAi]);
 
-    const clearBenefit=swappedCost+35*state.switchSensitivity<currentCost;
-
-    return defendersClose && (attackersCross || clearBenefit);
+    const clearBenefit=swappedCost+40*state.switchSensitivity<currentCost;
+    return defendersClose && (crossing || clearBenefit);
   }
 
   function updateMarkAssignments(){
@@ -310,26 +324,20 @@
 
     allPermutations.forEach(mapping=>{
       const cost=assignmentCost(mapping);
-      if(cost<bestCost){
-        bestCost=cost;
-        best=mapping.slice();
-      }
+      if(cost<bestCost){bestCost=cost;best=mapping.slice();}
     });
 
     const next=state.markMap.slice();
 
-    // 우선 2인 스위칭부터 판단
     for(let i=0;i<defenders.length;i++){
       for(let j=i+1;j<defenders.length;j++){
         if(shouldSwitchPair(i,j,state.markMap,best)){
           state.switchHold[i]++;
           state.switchHold[j]++;
+          const required=Math.round(18-state.switchSensitivity*9);
 
-          const required=Math.round(18-(state.switchSensitivity*10));
           if(state.switchHold[i]>=required && state.switchHold[j]>=required){
-            const temp=next[i];
-            next[i]=next[j];
-            next[j]=temp;
+            [next[i],next[j]]=[next[j],next[i]];
             state.switchHold[i]=0;
             state.switchHold[j]=0;
           }
@@ -337,48 +345,7 @@
       }
     }
 
-    // 스위칭이 아닌 단순 재배정은 훨씬 보수적으로 처리
-    for(let i=0;i<defenders.length;i++){
-      if(next[i]===state.markMap[i] && best[i]!==state.markMap[i]){
-        const currentA=attackers[state.markMap[i]];
-        const proposedA=attackers[best[i]];
-        const currentDist=dist(defenders[i],currentA);
-        const proposedDist=dist(defenders[i],proposedA);
-
-        if(proposedDist+90*state.switchSensitivity<currentDist){
-          state.switchHold[i]++;
-          const required=Math.round(28-(state.switchSensitivity*12));
-          if(state.switchHold[i]>=required){
-            next[i]=best[i];
-            state.switchHold[i]=0;
-          }
-        }else{
-          state.switchHold[i]=Math.max(0,state.switchHold[i]-1);
-        }
-      }
-    }
-
-    // 중복 배정 방지
-    if(new Set(next).size===4){
-      state.markMap=next;
-    }
-  }
-
-  function attackerThreat(a){
-    const goal={x:canvas.width/2,y:45};
-    const goalValue=clamp((520-dist(a,goal))/520,0,1);
-    const centralValue=clamp((175-Math.abs(a.x-canvas.width/2))/175,0,1);
-    const ballValue=clamp((360-dist(a,ball))/360,0,1);
-    const farPostValue=(Math.abs(a.x-ball.x)>260 && a.y<420)?0.55:0;
-    return clamp(goalValue*.45+centralValue*.20+ballValue*.25+farPostValue*.10,0,1);
-  }
-
-  function canPassOn(mark,defender){
-    const threat=attackerThreat(mark);
-    const farFromBall=dist(mark,ball)>360;
-    const behindBall=mark.y>ball.y+150;
-    const veryWide=Math.abs(mark.x-canvas.width/2)>275;
-    return threat<.28 && farFromBall && behindBall && veryWide && dist(defender,mark)>260;
+    if(new Set(next).size===4) state.markMap=next;
   }
 
   function identifyPivot(){
@@ -396,22 +363,55 @@
       .sort((a,b)=>a.y-b.y)[0] || null;
   }
 
-  function pressTrigger(){
+  function evaluatePressTrigger(){
     const owner=state.possession?.team==="attack"?state.possession.p:null;
-    if(!owner) return false;
+
+    if(!owner){
+      return {press:false,reason:"루즈볼 — 블록 유지"};
+    }
 
     const nearSideline=owner.x<125 || owner.x>canvas.width-125;
-    const isolated=Math.min(...attackers.filter(p=>p!==owner).map(p=>dist(p,owner)))>210;
-    const advanced=owner.y<620;
-    const centralDanger=Math.abs(owner.x-canvas.width/2)<145 && owner.y<520;
+    const nearestSupport=Math.min(...attackers.filter(p=>p!==owner).map(p=>dist(p,owner)));
+    const isolated=nearestSupport>220;
+    const centralEntry=Math.abs(owner.x-canvas.width/2)<145 && owner.y<500;
+    const backwardFacing=owner.y>690;
+    const badTouchZone=nearSideline && owner.y<620;
+    const pivotReception=owner===identifyPivot() && owner.y<430;
+    const lineBreak=attackers.some(a=>a.y<300 && dist(a,ball)<250);
 
-    if(state.defenseMode==="high") return owner.y<820;
-    if(state.defenseMode==="low") return nearSideline && advanced && isolated;
-    return (nearSideline && advanced) || centralDanger;
+    if(state.defenseMode==="high" && owner.y<835){
+      return {press:true,reason:"하이블록 설정"};
+    }
+
+    if(state.phase==="build"){
+      return {press:false,reason:"후방 전개 허용 — 대형 유지"};
+    }
+
+    if(pivotReception){
+      return {press:true,reason:"피벗 수신 대응"};
+    }
+
+    if(centralEntry || lineBreak){
+      return {press:true,reason:"중앙 진입 차단"};
+    }
+
+    if(badTouchZone && isolated){
+      return {press:true,reason:"사이드 고립 트리거"};
+    }
+
+    if(state.defenseMode==="low"){
+      return {press:false,reason:"로우블록 유지"};
+    }
+
+    return {press:false,reason:"명확한 압박 신호 없음"};
   }
 
   function choosePresser(){
-    if(!pressTrigger()){
+    const trigger=evaluatePressTrigger();
+    state.decision=trigger.press?"press":"hold";
+    state.decisionReason=trigger.reason;
+
+    if(!trigger.press){
       state.presser=null;
       state.switchCandidate=null;
       state.switchFrames=0;
@@ -419,54 +419,99 @@
     }
 
     const candidates=defenders.map((d,i)=>({
-      i,score:dist(d,ball)+Math.abs(d.x-ball.x)*.08
+      i,
+      score:dist(d,ball)+Math.abs(d.x-ball.x)*.08
     })).sort((a,b)=>a.score-b.score);
 
-    if(candidates[0].score>220){state.presser=null;return;}
-
-    const best=candidates[0].i;
-    if(best===state.presser){
-      state.switchCandidate=null;state.switchFrames=0;return;
+    if(candidates[0].score>225){
+      state.presser=null;
+      state.decision="hold";
+      state.decisionReason="압박 거리 부족";
+      return;
     }
 
-    const current=state.presser===null?999:(candidates.find(c=>c.i===state.presser)?.score??999);
+    const best=candidates[0].i;
+
+    if(best===state.presser){
+      state.switchCandidate=null;
+      state.switchFrames=0;
+      return;
+    }
+
+    const current=state.presser===null?999:
+      (candidates.find(c=>c.i===state.presser)?.score??999);
+
     if(candidates[0].score+28<current){
       if(state.switchCandidate===best) state.switchFrames++;
       else {state.switchCandidate=best;state.switchFrames=1;}
-      if(state.switchFrames>12){
-        state.presser=best;state.switchCandidate=null;state.switchFrames=0;
+
+      if(state.switchFrames>11){
+        state.presser=best;
+        state.switchCandidate=null;
+        state.switchFrames=0;
       }
     }
+  }
+
+  function canReleaseMark(mark){
+    const threat=attackerThreat(mark);
+    const farFromBall=dist(mark,ball)>380;
+    const behindBall=mark.y>ball.y+160;
+    const veryWide=Math.abs(mark.x-canvas.width/2)>280;
+
+    return state.phase!=="final" &&
+      threat<.25 &&
+      farFromBall &&
+      behindBall &&
+      veryWide;
   }
 
   function compactTargets(targets){
     const cx=targets.reduce((s,t)=>s+t.x,0)/targets.length;
     const cy=targets.reduce((s,t)=>s+t.y,0)/targets.length;
-    const maxDx=210*state.shapeWidth;
-    const maxDy=220;
+
+    const phaseWidth={
+      build:205,
+      progress:195,
+      entry:180,
+      final:165
+    }[state.phase]*state.shapeWidth;
+
+    const phaseDepth={
+      build:205,
+      progress:195,
+      entry:175,
+      final:155
+    }[state.phase];
+
     return targets.map(t=>({
-      x:clamp(t.x,cx-maxDx,cx+maxDx),
-      y:clamp(t.y,cy-maxDy,cy+maxDy)
+      x:clamp(t.x,cx-phaseWidth,cx+phaseWidth),
+      y:clamp(t.y,cy-phaseDepth,cy+phaseDepth)
     }));
   }
 
   function separateTargets(targets){
     const result=targets.map(t=>({...t}));
+
     for(let pass=0;pass<3;pass++){
       for(let i=0;i<result.length;i++){
         for(let j=i+1;j<result.length;j++){
           const dx=result[j].x-result[i].x;
           const dy=result[j].y-result[i].y;
-          const d=Math.hypot(dx,dy)||1;
-          const minGap=82;
-          if(d<minGap){
-            const push=(minGap-d)/2;
-            result[i].x-=dx/d*push; result[i].y-=dy/d*push;
-            result[j].x+=dx/d*push; result[j].y+=dy/d*push;
+          const gap=Math.hypot(dx,dy)||1;
+          const minGap=78;
+
+          if(gap<minGap){
+            const push=(minGap-gap)/2;
+            result[i].x-=dx/gap*push;
+            result[i].y-=dy/gap*push;
+            result[j].x+=dx/gap*push;
+            result[j].y+=dy/gap*push;
           }
         }
       }
     }
+
     return result;
   }
 
@@ -483,72 +528,89 @@
 
     const targets=defenders.map((d,i)=>{
       const marked=attackers[state.markMap[i]];
-      const gdir=unit(goal.x-marked.x,goal.y-marked.y);
       const threat=attackerThreat(marked);
+      const gdir=unit(goal.x-marked.x,goal.y-marked.y);
 
-      const markingDistance=threat>.68?54:threat>.42?66:78;
+      const markingDistance=
+        state.phase==="build"?105:
+        threat>.68?50:
+        threat>.42?64:78;
+
       const manTarget={
         x:marked.x+gdir.x*markingDistance,
         y:marked.y+gdir.y*markingDistance
       };
 
-      let target={...manTarget};
-      let role="Mark";
+      // 후방 전개에서는 공격수까지 내려가지 않고 자기 블록을 유지한다.
+      if(state.phase==="build" && state.defenseMode!=="man"){
+        const lane=midpoint(ball,marked,.34);
+        const target={
+          x:lerp(shell[i].x,lane.x,.13),
+          y:lerp(shell[i].y,lane.y,.10)
+        };
+        return {target,role:"Hold"};
+      }
 
       if(state.defenseMode==="man"){
-        return {target,role};
+        return {target:manTarget,role:"Mark"};
       }
 
       if(state.presser===i){
         const gd=unit(goal.x-ball.x,goal.y-ball.y);
-        target={
-          x:ball.x+gd.x*state.pressDistance,
-          y:ball.y+gd.y*state.pressDistance
+        return {
+          target:{
+            x:ball.x+gd.x*state.pressDistance,
+            y:ball.y+gd.y*state.pressDistance
+          },
+          role:"Press"
         };
-        role="Press";
-        return {target,role};
       }
 
-      if(marked===pivot && attackerThreat(pivot)>.48){
-        const front=midpoint(ball,pivot,.72);
-        target={
-          x:lerp(manTarget.x,front.x,.30),
-          y:lerp(manTarget.y,front.y,.30)
+      if(marked===pivot && attackerThreat(pivot)>.45){
+        const front=midpoint(ball,pivot,.70);
+        return {
+          target:{
+            x:lerp(manTarget.x,front.x,.32),
+            y:lerp(manTarget.y,front.y,.32)
+          },
+          role:"Pivot"
         };
-        role="Pivot";
-        return {target,role};
       }
 
-      if(farPost && marked===farPost && farPost.y<440){
-        target={
-          x:lerp(manTarget.x,goal.x,.12),
-          y:lerp(manTarget.y,goal.y,.08)
+      if(farPost && marked===farPost && farPost.y<410){
+        return {
+          target:{
+            x:lerp(manTarget.x,goal.x,.15),
+            y:lerp(manTarget.y,goal.y,.10)
+          },
+          role:"Far Post"
         };
-        role="Far Post";
-        return {target,role};
       }
 
-      const zoneOff=canPassOn(marked,d);
-      const lane=midpoint(ball,marked,.45);
+      const release=canReleaseMark(marked);
+      const lane=midpoint(ball,marked,.44);
       const cover=midpoint(ball,goal,.52);
+
       const zoneTarget={
-        x:lerp(shell[i].x,lerp(cover.x,lane.x,.40),.34),
-        y:lerp(shell[i].y,lerp(cover.y,lane.y,.40),.34)
+        x:lerp(shell[i].x,lerp(cover.x,lane.x,.38),.30),
+        y:lerp(shell[i].y,lerp(cover.y,lane.y,.38),.30)
       };
 
-      let manWeight=state.markingBias;
-      if(state.defenseMode==="high") manWeight=Math.max(manWeight,.70);
-      if(state.defenseMode==="low") manWeight=Math.min(manWeight,.48);
-      if(zoneOff) manWeight=.20;
-      else manWeight=clamp(manWeight+threat*.18,.35,.92);
+      let manWeight=
+        state.phase==="progress"?.52:
+        state.phase==="entry"?.70:
+        state.phase==="final"?.84:state.markingBias;
 
-      target={
-        x:lerp(zoneTarget.x,manTarget.x,manWeight),
-        y:lerp(zoneTarget.y,manTarget.y,manWeight)
+      manWeight=clamp(manWeight+(threat-.5)*.24,.32,.94);
+      if(release) manWeight=.16;
+
+      return {
+        target:{
+          x:lerp(zoneTarget.x,manTarget.x,manWeight),
+          y:lerp(zoneTarget.y,manTarget.y,manWeight)
+        },
+        role:release?"Zone":threat>.60?"Tight Mark":"Mark"
       };
-
-      role=zoneOff?"Zone":threat>.55?"Tight Mark":"Mark";
-      return {target,role};
     });
 
     const compacted=separateTargets(compactTargets(targets.map(x=>x.target)));
@@ -697,7 +759,7 @@
     document.getElementById("shapeDesc").textContent=`신뢰도 ${Math.round(analysis.shape.confidence*100)}%`;
     document.getElementById("balance").textContent=analysis.score;
     document.getElementById("coachTitle").textContent=analysis.title;
-    document.getElementById("coachText").textContent=`현재 공격 형태는 ${analysis.shape.name}에 가깝습니다. 상대 AI는 맨마킹을 기본으로 하며, 공격수가 교차하거나 로테이션하면 인접 수비수끼리 스위칭해 담당 선수를 인계합니다.`;
+    document.getElementById("coachText").textContent=`현재 공격 형태는 ${analysis.shape.name}에 가깝습니다. 상대 AI는 경기 국면을 먼저 판단합니다. 후방 전개에는 블록을 유지하고, 중앙 진입·피벗 수신·사이드 고립 같은 트리거에서만 압박합니다.`;
     document.getElementById("coachList").innerHTML=analysis.tips.map(t=>`<li>${t}</li>`).join("");
 
     if(!state.possession){
@@ -711,6 +773,13 @@
     const nearest=Math.min(...defenders.map(d=>dist(d,ball)));
     const nearby=defenders.filter(d=>dist(d,ball)<180).length;
     document.getElementById("pressure").textContent=Math.round(clamp((1-nearest/220)*65+nearby*10,0,100))+"%";
+    document.getElementById("gamePhase").textContent=phaseName(state.phase);
+    document.getElementById("phaseDesc").textContent=
+      state.phase==="build"?"후방 전개":
+      state.phase==="progress"?"중원 진입":
+      state.phase==="entry"?"위험 지역 접근":"골문 직접 위협";
+    document.getElementById("defDecision").textContent=state.decision==="press"?"PRESS":"HOLD";
+    document.getElementById("decisionDesc").textContent=state.decisionReason;
   }
 
   function render(){
@@ -777,6 +846,7 @@
   bindRange("shapeWidth","shapeWidth","shapeWidthVal",2);
   bindRange("markingBias","markingBias","markingBiasVal",2);
   bindRange("switchSensitivity","switchSensitivity","switchSensitivityVal",2);
+  bindRange("blockHeight","blockHeight","blockHeightVal",2);
   bindRange("maxSpeed","maxSpeed","maxSpeedVal",2);
 
   function saveNames(){
@@ -805,7 +875,7 @@
     attackers.forEach((p,i)=>Object.assign(p,initial.attackers[i],{name:p.name}));
     defenders.forEach((p,i)=>Object.assign(p,initial.defenders[i],{name:p.name}));
     Object.assign(ball,initial.ball);
-    state.presser=null; state.possession=null; state.dribbleOwner=null; state.markMap=[0,1,2,3]; state.switchHold=[0,0,0,0];
+    state.presser=null; state.possession=null; state.dribbleOwner=null; state.markMap=[0,1,2,3]; state.switchHold=[0,0,0,0]; state.phase="build"; state.decision="hold"; state.decisionReason="압박 트리거 없음";
   });
 
   loadNames(); buildRoster(); render();
