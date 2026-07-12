@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#0a0d12">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>FUTSAL AI LAB</title>
+  <style>
+    :root{
+      --bg:#080b10;--panel:#11161d;--panel2:#151c24;--line:#2a3441;
+      --text:#f4f7fb;--muted:#8e9baa;--lime:#c8ff2f;--cyan:#3fe0ff;
+      --red:#ff5f66;--amber:#ffc857;--court:#0d4d56;
+    }
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{margin:0;min-height:100%;background:radial-gradient(circle at top,#17212d 0,#090d12 40%,#05070a 100%);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{overscroll-behavior:none}
+    .app{max-width:1200px;margin:0 auto;padding:12px}
+    .hero{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;margin-bottom:12px;border:1px solid #26303d;border-radius:18px;background:linear-gradient(135deg,rgba(200,255,47,.12),rgba(63,224,255,.06) 45%,rgba(255,255,255,.02));box-shadow:0 18px 70px rgba(0,0,0,.38)}
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(145deg,var(--lime),#80ff95);color:#071008;font-weight:1000;font-size:18px;letter-spacing:-1px;box-shadow:0 0 28px rgba(200,255,47,.25)}
+    .hero h1{font-size:20px;margin:0;letter-spacing:.5px}
+    .hero p{margin:3px 0 0;font-size:12px;color:var(--muted)}
+    .version{font-size:11px;font-weight:800;color:#0a120a;background:var(--lime);padding:7px 10px;border-radius:999px;white-space:nowrap}
+    .grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+    .boardCard,.sideCard{background:linear-gradient(180deg,rgba(21,28,36,.98),rgba(12,17,23,.98));border:1px solid #26303d;border-radius:20px;box-shadow:0 24px 70px rgba(0,0,0,.35)}
+    .boardCard{padding:10px}.sideCard{padding:14px}
+    #board{display:block;width:100%;height:auto;border-radius:16px;background:#0d4d56;touch-action:none}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+    button,select,input{font:inherit}
+    button,select{color:var(--text);background:#18212b;border:1px solid #334050;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:800}
+    button.active{color:#0a120a;background:var(--lime);border-color:var(--lime)}
+    button:active{transform:translateY(1px)}
+    select{flex:1;min-width:150px}
+    .sectionTitle{margin:14px 0 8px;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#b7c3d0;font-weight:900}
+    .statGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .stat{padding:12px;border:1px solid #283442;border-radius:14px;background:#0d131a;min-height:88px}
+    .stat label{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+    .stat strong{font-size:20px;letter-spacing:-.7px}
+    .stat small{display:block;color:var(--muted);font-size:10px;margin-top:5px;line-height:1.35}
+    .rangeRow{display:grid;grid-template-columns:110px 1fr 44px;gap:8px;align-items:center;margin:9px 0;font-size:12px;color:#dce5ef}
+    input[type=range]{width:100%;accent-color:var(--lime)}
+    .roster{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .nameInput{width:100%;padding:10px 11px;border-radius:11px;border:1px solid #2f3a47;background:#0e141b;color:white;font-weight:800;font-size:12px}
+    .nameInput:focus{outline:2px solid rgba(200,255,47,.35);border-color:var(--lime)}
+    .hint{margin-top:10px;padding:10px 11px;border-radius:12px;background:rgba(63,224,255,.08);border:1px solid rgba(63,224,255,.22);color:#cceff5;font-size:11px;line-height:1.5}
+    .legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;color:#aeb9c6;font-size:10px}
+    .legend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%}
+    @media(min-width:920px){.app{padding:18px}.grid{grid-template-columns:minmax(0,1fr) 330px}.sideCard{position:sticky;top:18px;height:fit-content}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="hero">
+    <div class="brand">
+      <div class="logo">FUT</div>
+      <div><h1>FUTSAL AI LAB</h1><p>선수와 공을 직접 움직이고, 상대 수비 반응을 시뮬레이션하세요.</p></div>
+    </div>
+    <div class="version">v0.5</div>
+  </header>
+
+  <main class="grid">
+    <section class="boardCard"><canvas id="board" width="760" height="1120"></canvas></section>
+
+    <aside class="sideCard">
+      <div class="toolbar">
+        <select id="mode">
+          <option value="balanced">Balanced Block</option>
+          <option value="high">High Press</option>
+          <option value="zone">Zone Defense</option>
+          <option value="man">Man Marking</option>
+        </select>
+        <button id="aiToggle" class="active">AI ON</button>
+        <button id="resetBtn">Reset</button>
+      </div>
+
+      <div class="statGrid">
+        <div class="stat"><label>Possession</label><strong id="possession">Loose Ball</strong><small id="possessionDesc">50:50 또는 무소유 상태</small></div>
+        <div class="stat"><label>Pressure</label><strong id="pressure">0%</strong><small>공 주변 압박 밀도</small></div>
+      </div>
+
+      <div class="sectionTitle">Visual Analysis</div>
+      <div class="toolbar">
+        <button id="pathsBtn" class="active">수비 경로</button>
+        <button id="lanesBtn" class="active">패스 위험</button>
+        <button id="zoneBtn" class="active">압박 반경</button>
+      </div>
+
+      <div class="sectionTitle">Defense Tuning</div>
+      <div class="rangeRow"><span>반응 속도</span><input id="reaction" type="range" min="0.02" max="0.14" step="0.01" value="0.07"><b id="reactionVal">0.07</b></div>
+      <div class="rangeRow"><span>압박 거리</span><input id="pressDistance" type="range" min="55" max="140" step="5" value="90"><b id="pressVal">90</b></div>
+      <div class="rangeRow"><span>수비 간격</span><input id="shapeWidth" type="range" min="0.7" max="1.25" step="0.05" value="0.95"><b id="shapeVal">0.95</b></div>
+      <div class="rangeRow"><span>최대 속도</span><input id="maxSpeed" type="range" min="1.5" max="6" step="0.25" value="3.25"><b id="speedVal">3.25</b></div>
+
+      <div class="sectionTitle">Player Names</div>
+      <div class="roster" id="roster"></div>
+      <div class="hint">공은 선수와 완전히 분리되어 있습니다. 공을 따로 드래그해 50:50, 루즈볼, 인터셉트 상황을 직접 만들어보세요.</div>
+      <div class="legend">
+        <span><i class="dot" style="background:#f5f7fb"></i>우리팀</span>
+        <span><i class="dot" style="background:#ff5f66"></i>상대팀</span>
+        <span><i class="dot" style="background:#c8ff2f"></i>안전 패스</span>
+        <span><i class="dot" style="background:#ff5f66"></i>위험 패스</span>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+
+  const state = {
+    selected:null, mode:'balanced', aiOn:true,
+    showPaths:true, showLanes:true, showZone:true,
+    reaction:0.07, pressDistance:90, shapeWidth:0.95, maxSpeed:3.25,
+    presser:0, switchCandidate:null, switchFrames:0, possession:null
+  };
+
+  const attackers = [
+    {id:'A1',name:'A1',x:190,y:760,r:25},{id:'A2',name:'A2',x:560,y:760,r:25},
+    {id:'A3',name:'A3',x:260,y:560,r:25},{id:'A4',name:'A4',x:500,y:420,r:25}
+  ];
+  const defenders = [
+    {id:'D1',name:'D1',x:220,y:340,r:25,tx:220,ty:340,role:'Block'},
+    {id:'D2',name:'D2',x:540,y:340,r:25,tx:540,ty:340,role:'Block'},
+    {id:'D3',name:'D3',x:280,y:520,r:25,tx:280,ty:520,role:'Cover'},
+    {id:'D4',name:'D4',x:480,y:520,r:25,tx:480,ty:520,role:'Cover'}
+  ];
+  const ball = {id:'BALL',x:585,y:805,r:13};
+  const initial = {attackers:attackers.map(p=>({...p})),defenders:defenders.map(p=>({...p})),ball:{...ball}};
+
+  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+  const lerp=(a,b,t)=>a+(b-a)*t;
+  const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  const midpoint=(a,b,t=.5)=>({x:lerp(a.x,b.x,t),y:lerp(a.y,b.y,t)});
+  const unit=(dx,dy)=>{const d=Math.hypot(dx,dy)||1;return{x:dx/d,y:dy/d}};
+
+  function detectPossession(){
+    const list=[...attackers.map((p,i)=>({team:'attack',index:i,p,d:dist(p,ball)})),...defenders.map((p,i)=>({team:'defend',index:i,p,d:dist(p,ball)}))].sort((a,b)=>a.d-b.d);
+    const first=list[0],second=list[1];
+    state.possession=(first&&first.d<48&&(!second||second.d-first.d>14))?first:null;
+  }
+
+  function choosePresser(){
+    const scores=defenders.map((d,i)=>({i,score:dist(d,ball)+(d.y>ball.y?18:0)})).sort((a,b)=>a.score-b.score);
+    const best=scores[0].i;
+    if(best===state.presser){state.switchCandidate=null;state.switchFrames=0;return}
+    const current=scores.find(s=>s.i===state.presser)?.score??999;
+    if(scores[0].score+35<current){
+      if(state.switchCandidate===best)state.switchFrames++;else{state.switchCandidate=best;state.switchFrames=1}
+      if(state.switchFrames>16){state.presser=best;state.switchCandidate=null;state.switchFrames=0}
+    }else{state.switchCandidate=null;state.switchFrames=0}
+  }
+
+  function computeDefense(){
+    if(!state.aiOn)return;
+    choosePresser();
+    const goal={x:canvas.width/2,y:45};
+    const shiftX=clamp((ball.x-canvas.width/2)*0.30,-120,120);
+    const shiftY=clamp((ball.y-520)*0.20,-70,130);
+    const width=150*state.shapeWidth;
+    const shell=[
+      {x:canvas.width/2-width+shiftX,y:340+shiftY},
+      {x:canvas.width/2+width+shiftX,y:340+shiftY},
+      {x:canvas.width/2-width*.72+shiftX*.62,y:535+shiftY*.70},
+      {x:canvas.width/2+width*.72+shiftX*.62,y:535+shiftY*.70}
+    ];
+    defenders.forEach((d,i)=>{
+      let target={...shell[i]},role='Block';
+      if(state.mode==='man'){
+        const a=attackers[i%attackers.length],gd=unit(goal.x-a.x,goal.y-a.y);
+        target={x:a.x+gd.x*78,y:a.y+gd.y*78};role='Mark';
+      }else if(i===state.presser){
+        const gd=unit(goal.x-ball.x,goal.y-ball.y);
+        const pd=state.mode==='high'?state.pressDistance*.70:state.pressDistance;
+        target={x:ball.x+gd.x*pd,y:ball.y+gd.y*pd};role='Press';
+      }else{
+        const nonPressers=defenders.filter((_,idx)=>idx!==state.presser);
+        const rank=nonPressers.indexOf(d);
+        const candidates=attackers.slice().sort((a,b)=>dist(a,ball)-dist(b,ball));
+        const mark=candidates[Math.min(rank,candidates.length-1)];
+        const lane=midpoint(ball,mark,.48),cover=midpoint(ball,goal,.44+Math.max(0,rank)*.08);
+        if(state.mode==='zone'){
+          target={x:lerp(shell[i].x,cover.x,.30),y:lerp(shell[i].y,cover.y,.30)};role='Zone';
+        }else{
+          target={x:lerp(shell[i].x,lerp(cover.x,lane.x,.48),.52),y:lerp(shell[i].y,lerp(cover.y,lane.y,.48),.52)};
+          role=rank===0?'Cover':'Lane';
+        }
+        if(state.mode==='high'){target.x=lerp(target.x,ball.x,.10);target.y=lerp(target.y,ball.y,.12)}
+        target.y=Math.min(target.y,ball.y-50);
+      }
+      d.tx=clamp(target.x,60,canvas.width-60);d.ty=clamp(target.y,80,canvas.height-80);d.role=role;
+    });
+  }
+
+  function animateDefense(){
+    if(!state.aiOn)return;
+    defenders.forEach(d=>{
+      const dx=d.tx-d.x,dy=d.ty-d.y,distance=Math.hypot(dx,dy);
+      if(distance<.5)return;
+      const speed=Math.min(state.maxSpeed,distance*state.reaction);
+      d.x+=dx/distance*speed;d.y+=dy/distance*speed;
+    });
+  }
+
+  function lineDistance(a,b,p){
+    const vx=b.x-a.x,vy=b.y-a.y,wx=p.x-a.x,wy=p.y-a.y;
+    const t=clamp((vx*wx+vy*wy)/(vx*vx+vy*vy||1),0,1);
+    return Math.hypot(p.x-(a.x+t*vx),p.y-(a.y+t*vy));
+  }
+
+  function passRisk(to){
+    let min=999;defenders.forEach(d=>min=Math.min(min,lineDistance(ball,to,d)));
+    return clamp(clamp((115-min)/115,0,1)*.8+clamp((dist(ball,to)-180)/500,0,1)*.2,0,1);
+  }
+
+  function drawCourt(){
+    const w=canvas.width,h=canvas.height;
+    ctx.clearRect(0,0,w,h);
+    const g=ctx.createLinearGradient(0,0,w,h);g.addColorStop(0,'#0f5963');g.addColorStop(1,'#08363e');
+    ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
+    ctx.strokeStyle='rgba(255,255,255,.82)';ctx.lineWidth=5;ctx.strokeRect(28,28,w-56,h-56);
+    ctx.beginPath();ctx.moveTo(28,h/2);ctx.lineTo(w-28,h/2);ctx.stroke();
+    ctx.beginPath();ctx.arc(w/2,h/2,84,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.arc(w/2,120,145,0,Math.PI);ctx.stroke();
+    ctx.beginPath();ctx.arc(w/2,h-120,145,Math.PI,Math.PI*2);ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.95)';ctx.lineWidth=7;
+    ctx.strokeRect(w/2-95,10,190,45);ctx.strokeRect(w/2-95,h-55,190,45);
+  }
+
+  function drawAnalysis(){
+    if(state.showPaths)defenders.forEach(d=>{ctx.save();ctx.strokeStyle='rgba(63,224,255,.70)';ctx.lineWidth=4;ctx.setLineDash([11,10]);ctx.beginPath();ctx.moveTo(d.x,d.y);ctx.lineTo(d.tx,d.ty);ctx.stroke();ctx.restore()});
+    if(state.showZone){ctx.save();ctx.strokeStyle='rgba(255,95,102,.28)';ctx.fillStyle='rgba(255,95,102,.07)';ctx.lineWidth=3;ctx.beginPath();ctx.arc(ball.x,ball.y,state.pressDistance,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.restore()}
+    if(state.showLanes)attackers.forEach(a=>{const risk=passRisk(a);ctx.save();ctx.strokeStyle=risk<.35?'rgba(200,255,47,.88)':risk<.65?'rgba(255,200,87,.82)':'rgba(255,95,102,.88)';ctx.lineWidth=5;ctx.setLineDash([14,10]);ctx.beginPath();ctx.moveTo(ball.x,ball.y);ctx.lineTo(a.x,a.y);ctx.stroke();ctx.restore()});
+  }
+
+  function drawPlayer(p,team){
+    ctx.save();ctx.shadowColor='rgba(0,0,0,.42)';ctx.shadowBlur=12;ctx.shadowOffsetY=5;
+    ctx.fillStyle=team==='attack'?'#f5f7fb':'#ff5f66';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();
+    ctx.shadowColor='transparent';ctx.strokeStyle=team==='attack'?'#c8ff2f':'#7d2228';ctx.lineWidth=4;ctx.stroke();
+    ctx.fillStyle=team==='attack'?'#10151b':'#fff';ctx.font='900 14px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(p.name,p.x,p.y);
+    if(team==='defend'){ctx.font='800 10px system-ui';const w=ctx.measureText(p.role).width+14;ctx.fillStyle='rgba(6,9,13,.78)';ctx.fillRect(p.x-w/2,p.y+32,w,19);ctx.fillStyle='#fff';ctx.fillText(p.role,p.x,p.y+41.5)}
+    ctx.restore();
+  }
+
+  function drawBall(){
+    ctx.save();ctx.shadowColor='rgba(0,0,0,.5)';ctx.shadowBlur=10;ctx.shadowOffsetY=4;ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);ctx.fill();ctx.shadowColor='transparent';ctx.strokeStyle='#0a0d12';ctx.lineWidth=3;ctx.stroke();
+    ctx.fillStyle='#0a0d12';for(let i=0;i<5;i++){const a=i*Math.PI*2/5;ctx.beginPath();ctx.arc(ball.x+Math.cos(a)*6,ball.y+Math.sin(a)*6,2.3,0,Math.PI*2);ctx.fill()}
+    ctx.restore();
+  }
+
+  function drawPossessionRing(){
+    if(!state.possession)return;
+    const p=state.possession.p;ctx.save();ctx.strokeStyle=state.possession.team==='attack'?'#c8ff2f':'#ff8d92';ctx.lineWidth=5;ctx.setLineDash([8,7]);ctx.beginPath();ctx.arc(p.x,p.y,p.r+11,0,Math.PI*2);ctx.stroke();ctx.restore();
+  }
+
+  function updateStats(){
+    detectPossession();
+    const pos=document.getElementById('possession'),desc=document.getElementById('possessionDesc');
+    if(!state.possession){pos.textContent='Loose Ball';desc.textContent='50:50 또는 무소유 상태'}
+    else{pos.textContent=state.possession.p.name;desc.textContent=state.possession.team==='attack'?'우리 팀 소유':'상대 팀 소유'}
+    const nearest=Math.min(...defenders.map(d=>dist(d,ball))),nearby=defenders.filter(d=>dist(d,ball)<180).length;
+    document.getElementById('pressure').textContent=Math.round(clamp((1-nearest/220)*65+nearby*10,0,100))+'%';
+  }
+
+  function render(){computeDefense();animateDefense();drawCourt();drawAnalysis();drawPossessionRing();attackers.forEach(p=>drawPlayer(p,'attack'));defenders.forEach(p=>drawPlayer(p,'defend'));drawBall();updateStats();requestAnimationFrame(render)}
+
+  function pointerPos(e){const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*(canvas.width/r.width),y:(e.clientY-r.top)*(canvas.height/r.height)}}
+  function hitTest(pos){
+    if(dist(pos,ball)<ball.r+30)return{type:'ball',obj:ball,index:-1};
+    for(let i=attackers.length-1;i>=0;i--)if(dist(pos,attackers[i])<attackers[i].r+18)return{type:'attack',obj:attackers[i],index:i};
+    for(let i=defenders.length-1;i>=0;i--)if(dist(pos,defenders[i])<defenders[i].r+18)return{type:'defend',obj:defenders[i],index:i};
+    return null;
+  }
+
+  canvas.addEventListener('pointerdown',e=>{e.preventDefault();state.selected=hitTest(pointerPos(e));if(state.selected)canvas.setPointerCapture(e.pointerId)});
+  canvas.addEventListener('pointermove',e=>{if(!state.selected)return;e.preventDefault();const p=pointerPos(e);state.selected.obj.x=clamp(p.x,45,canvas.width-45);state.selected.obj.y=clamp(p.y,60,canvas.height-60);if(state.selected.type==='defend'){state.selected.obj.tx=state.selected.obj.x;state.selected.obj.ty=state.selected.obj.y}});
+  canvas.addEventListener('pointerup',()=>state.selected=null);canvas.addEventListener('pointercancel',()=>state.selected=null);
+
+  function bindToggle(id,key){const el=document.getElementById(id);el.addEventListener('click',()=>{state[key]=!state[key];el.classList.toggle('active',state[key])})}
+  document.getElementById('mode').addEventListener('change',e=>state.mode=e.target.value);
+  document.getElementById('aiToggle').addEventListener('click',e=>{state.aiOn=!state.aiOn;e.currentTarget.classList.toggle('active',state.aiOn);e.currentTarget.textContent=state.aiOn?'AI ON':'AI OFF'});
+  bindToggle('pathsBtn','showPaths');bindToggle('lanesBtn','showLanes');bindToggle('zoneBtn','showZone');
+
+  function bindRange(id,key,valId,digits){const input=document.getElementById(id);input.addEventListener('input',e=>{state[key]=parseFloat(e.target.value);document.getElementById(valId).textContent=state[key].toFixed(digits)})}
+  bindRange('reaction','reaction','reactionVal',2);bindRange('pressDistance','pressDistance','pressVal',0);bindRange('shapeWidth','shapeWidth','shapeVal',2);bindRange('maxSpeed','maxSpeed','speedVal',2);
+
+  function saveNames(){localStorage.setItem('futsal-ai-names-v05',JSON.stringify({a:attackers.map(p=>p.name),d:defenders.map(p=>p.name)}))}
+  function loadNames(){try{const data=JSON.parse(localStorage.getItem('futsal-ai-names-v05')||'null');data?.a?.forEach((n,i)=>{if(attackers[i])attackers[i].name=n});data?.d?.forEach((n,i)=>{if(defenders[i])defenders[i].name=n})}catch{}}
+  function buildRoster(){const root=document.getElementById('roster');root.innerHTML='';[...attackers,...defenders].forEach(p=>{const input=document.createElement('input');input.className='nameInput';input.value=p.name;input.maxLength=8;input.placeholder=p.id;input.addEventListener('input',()=>{p.name=input.value.trim()||p.id;saveNames()});root.appendChild(input)})}
+  document.getElementById('resetBtn').addEventListener('click',()=>{attackers.forEach((p,i)=>Object.assign(p,initial.attackers[i],{name:p.name}));defenders.forEach((p,i)=>Object.assign(p,initial.defenders[i],{name:p.name}));Object.assign(ball,initial.ball);state.presser=0;state.possession=null});
+
+  loadNames();buildRoster();render();
+})();
+</script>
+</body>
+</html>
